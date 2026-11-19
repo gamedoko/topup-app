@@ -182,6 +182,7 @@ label{display:block;font-weight:700;font-size:14px;margin:12px 0 6px}
 .sheet{position:fixed;top:64px;right:10px;left:10px;max-width:340px;margin-left:auto;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;z-index:70;box-shadow:0 10px 40px rgba(0,0,0,.3)}
 #toast{position:fixed;left:14px;right:14px;top:70px;background:#111;color:#fff;padding:14px;border-radius:14px;z-index:130;transform:translateY(-140px);transition:transform .35s;max-width:520px;margin:0 auto;font-size:14px}
 #toast.show{transform:translateY(0)}
+.pkgrow{display:flex;gap:8px;align-items:stretch;margin-bottom:8px}.pkgrow .pkg{margin-bottom:0;flex:1;width:auto}.pedit{width:48px;flex-shrink:0;border-radius:14px;background:var(--card);border:1px solid var(--line);font-size:18px;color:var(--text)}
 .foot{text-align:center;color:var(--muted);font-size:13px;margin:18px 0}
 </style>
 </head>
@@ -245,7 +246,7 @@ window.__gd_ready = true;
 if ("serviceWorker" in navigator) { window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{})); }
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, collection, query, where, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteField, collection, query, where, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ============ CONFIG ============ */
 const firebaseConfig = {
@@ -314,18 +315,23 @@ function offOf(g, p){
   return 0;                                      // below Rs 400: no tag
 }
 const wasOf = (pct, p) => Math.round(p / (1 - pct/100));
-const maxOff = g => Math.max(0, ...g.cats.flatMap(c => c.items.map(it => offOf(g, it[1]))));
+const maxOff = g => Math.max(0, ...g.cats.flatMap((c,ci) => c.items.map((it,ii) => offOf(g, priceOf(g,ci,ii)))));
 function priceHTML(g, p){
   const pc = offOf(g, p);
   return pc > 0 ? `<s class="muted" style="font-weight:400;font-size:12px">${rs(wasOf(pc,p))}</s><br>${rs(p)} <span class="off">${pc}% OFF</span>` : rs(p);
 }
 const rs = n => "Rs " + Number(n).toLocaleString("en-IN");
+/* Admin settings (sold out + edited prices) live in Firestore doc config/store */
+let cfg = { soldOut:{}, prices:{} };
+const isSold = g => (g.id in cfg.soldOut) ? !!cfg.soldOut[g.id] : !!g.soldOut;
+const pkey = (g,ci,ii) => g.id + "_" + ci + "_" + ii;
+const priceOf = (g,ci,ii) => { const v = Number(cfg.prices[pkey(g,ci,ii)]); return v > 0 ? v : g.cats[ci].items[ii][1]; };
 
 const NEPAL_FLAG = `<svg viewBox="0 0 60 74" xmlns="http://www.w3.org/2000/svg" aria-label="Nepal flag"><path d="M5 3 53 37H25l30 34H5z" fill="#DC143C" stroke="#003893" stroke-width="4" stroke-linejoin="round"/><circle cx="19" cy="49" r="5" fill="#fff"/><path d="M13 22a7 7 0 1 0 12 0 6 6 0 0 1-12 0z" fill="#fff"/></svg>`;
 
 /* ---------- State ---------- */
 let me = null, profile = null, myOrders = [], adminOrders = [], adminChats = [];
-let unsubOrders = null, unsubAdmin = null, unsubChatDoc = null, unsubAdminChats = null, msgUnsub = null;
+let unsubOrders = null, unsubAdmin = null, unsubChatDoc = null, unsubAdminChats = null, msgUnsub = null, unsubCfg = null;
 let unreadUser = false;
 let current = { page:"home", game:null, item:null };
 const $ = s => document.querySelector(s);
@@ -385,8 +391,9 @@ $("#guestBtn").onclick = async () => {
 onAuthStateChanged(auth, async user => {
   if (!user) {
     me = null; profile = null;
-    [unsubOrders, unsubAdmin, unsubChatDoc, unsubAdminChats, msgUnsub].forEach(u => u && u());
-    unsubOrders = unsubAdmin = unsubChatDoc = unsubAdminChats = msgUnsub = null;
+    [unsubOrders, unsubAdmin, unsubChatDoc, unsubAdminChats, msgUnsub, unsubCfg].forEach(u => u && u());
+    unsubOrders = unsubAdmin = unsubChatDoc = unsubAdminChats = msgUnsub = unsubCfg = null;
+    cfg = { soldOut:{}, prices:{} };
     $("#main").classList.add("hidden");
     $("#loginScreen").classList.remove("hidden"); hideSplash(); return;
   }
@@ -425,8 +432,13 @@ function renderAvatar(){
 let firstLoad = true;
 const ts = o => o.createdAt && o.createdAt.toMillis ? o.createdAt.toMillis() : Date.now();
 function watchAll(){
-  [unsubOrders, unsubAdmin, unsubChatDoc, unsubAdminChats].forEach(u => u && u());
+  [unsubOrders, unsubAdmin, unsubChatDoc, unsubAdminChats, unsubCfg].forEach(u => u && u());
   firstLoad = true;
+  unsubCfg = onSnapshot(doc(db,"config","store"), snap => {
+    const d = snap.exists() ? snap.data() : {};
+    cfg = { soldOut: d.soldOut || {}, prices: d.prices || {} };
+    if (["home","game","settings"].includes(current.page)) render();
+  }, err => console.warn(err));
   unsubOrders = onSnapshot(query(collection(db,"orders"), where("uid","==",me.uid)), snap => {
     if (!firstLoad) {
       snap.docChanges().forEach(ch => {
@@ -535,7 +547,7 @@ function render(){
 
 function priceListHTML(){
   return GAMES.map((g,i)=>`<details class="pl"${i===0?" open":""}><summary><span>${i+1}. ${esc(g.full)}</span></summary><div class="in">
-    ${g.cats.map(c=>`<h4>${esc(c.name)}</h4>${c.items.map(it=>`<div class="r"><span>${esc(it[0])}</span><b>${rs(it[1])}</b></div>`).join("")}`).join("")}
+    ${g.cats.map((c,ci)=>`<h4>${esc(c.name)}</h4>${c.items.map((it,ii)=>`<div class="r"><span>${esc(it[0])}</span><b>${rs(priceOf(g,ci,ii))}</b></div>`).join("")}`).join("")}
   </div></details>`).join("");
 }
 
@@ -547,7 +559,7 @@ function renderHome(){
       ${GAMES.map(g=>`<button class="game" data-g="${g.id}" style="background:${g.bg}">
         ${gicon(g)}
         <span><span class="wm ${g.wm}">${esc(g.name)}</span><small>${maxOff(g)>0?`<span class="off" style="margin:0 6px 0 0">Up to ${maxOff(g)}% OFF</span>`:""}Tap to top up</small></span>
-        <span class="go">›</span>${g.soldOut?`<span class="soldtag">SOLD OUT</span>`:""}</button>`).join("")}
+        <span class="go">›</span>${isSold(g)?`<span class="soldtag">SOLD OUT</span>`:""}</button>`).join("")}
     </div>
     <div class="card why" style="margin-top:16px">
       <h3>Why Choose GameDoko Store?</h3>
@@ -557,7 +569,7 @@ function renderHome(){
     <div class="foot">Made by Kiran Rimal</div>`;
   app$.querySelectorAll(".game").forEach(b => b.onclick = () => {
     const g = GAMES.find(x=>x.id===b.dataset.g);
-    if (g && g.soldOut) return modal("🚫", g.name + " is SOLD OUT", "These items are sold out right now. Please check back later.", "OK");
+    if (g && isSold(g) && !isAdmin()) return modal("🚫", g.name + " is SOLD OUT", "These items are sold out right now. Please check back later.", "OK");
     go("game",{game:b.dataset.g});
   });
 }
@@ -567,15 +579,43 @@ function renderGame(){
   app$.innerHTML = `
     <div class="page-title"><button class="back" id="bk">←</button>Select package</div>
     <div class="banner" style="background:${g.bg}">${gicon(g)}<span class="wm ${g.wm}" style="font-size:34px">${esc(g.name)}</span></div>
+    ${isAdmin()?`<div class="muted" style="margin:6px 2px">${isSold(g)?"🚫 SOLD OUT for customers (only you can open this). ":""}Tap ✏️ to change a price.</div>`:""}
     ${g.cats.map((c,ci)=>`<div class="sect">${esc(c.name)}</div>${c.items.map((it,ii)=>`
-      <button class="pkg" data-c="${ci}" data-i="${ii}">
+      <div class="pkgrow"><button class="pkg" data-c="${ci}" data-i="${ii}">
         <div class="l"><div class="em">${it[2]}</div><b>${esc(it[0])}</b></div>
-        <div class="price" style="text-align:right">${priceHTML(g,it[1])}</div></button>`).join("")}`).join("")}`;
+        <div class="price" style="text-align:right">${priceHTML(g,priceOf(g,ci,ii))}</div></button>${isAdmin()?`<button class="pedit" data-ec="${ci}" data-ei="${ii}" aria-label="Edit price">✏️</button>`:""}</div>`).join("")}`).join("")}`;
   $("#bk").onclick = () => go("home");
   app$.querySelectorAll(".pkg").forEach(b => b.onclick = () => {
     const it = g.cats[b.dataset.c].items[b.dataset.i];
-    go("order",{game:g.id,item:{name:it[0],price:it[1],em:it[2]}});
+    go("order",{game:g.id,item:{name:it[0],price:priceOf(g,+b.dataset.c,+b.dataset.i),em:it[2]}});
   });
+  app$.querySelectorAll(".pedit").forEach(b => b.onclick = () => priceModal(g, +b.dataset.ec, +b.dataset.ei));
+}
+
+function priceModal(g, ci, ii){
+  const it = g.cats[ci].items[ii], key = pkey(g,ci,ii), cur = priceOf(g,ci,ii), def = it[1];
+  $("#modalHost").innerHTML = `<div class="modal-bg"><div class="modal"><div class="em">✏️</div>
+    <h3>${esc(g.name)} - ${esc(it[0])}</h3>
+    <p class="muted">Current price: ${rs(cur)} (original ${rs(def)}).<br>Rs ${SERVICE_CHARGE} service charge is added at payment.</p>
+    <input class="inp" id="pnew" inputmode="numeric" autocomplete="off" value="${cur}" style="text-align:center">
+    <div class="err" id="perr"></div>
+    <button class="btn" id="psave">Save price</button>
+    <button class="btn alt" id="preset">Reset to original (${rs(def)})</button>
+    <button class="btn alt" id="pcancel">Cancel</button></div></div>`;
+  const close = () => { $("#modalHost").innerHTML = ""; };
+  $("#pnew").oninput = e => { e.target.value = e.target.value.replace(/\D/g,""); };
+  $("#pcancel").onclick = close;
+  $("#psave").onclick = async () => {
+    const v = Number($("#pnew").value);
+    if (!Number.isInteger(v) || v < 1 || v > 1000000) return $("#perr").textContent = "Enter a valid price (numbers only).";
+    $("#psave").disabled = true;
+    try { await setDoc(doc(db,"config","store"), { prices: { [key]: v } }, { merge:true }); close(); toast("Price saved: " + it[0] + " = " + rs(v)); }
+    catch(e){ $("#psave").disabled = false; $("#perr").textContent = "Could not save: " + (e.code || e.message); }
+  };
+  $("#preset").onclick = async () => {
+    try { if (key in cfg.prices) await updateDoc(doc(db,"config","store"), { ["prices." + key]: deleteField() }); close(); toast("Price reset to original"); }
+    catch(e){ $("#perr").textContent = "Could not reset: " + (e.code || e.message); }
+  };
 }
 
 let shotFile = null;
@@ -651,6 +691,7 @@ async function submitOrder(){
   const total = it.price + SERVICE_CHARGE;
   const id1 = $("#gid").value.trim(), id2 = g.zone ? id1 : $("#gid2").value.trim(), err = $("#err");
   err.textContent = "";
+  if (isSold(g) && !isAdmin()) return err.textContent = "This game is sold out right now. Please try later.";
   if (!g.rule.re.test(id1)) return err.textContent = g.rule.msg;
   if (!g.zone && id1 !== id2) return err.textContent = "The two IDs do not match. Please check again.";
   let gameId = id1;
@@ -754,6 +795,9 @@ function renderSettings(){
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
   app$.innerHTML = `
     <div class="page-title"><button class="back" id="bk">←</button>⚙️ Settings</div>
+    ${isAdmin()?`<div class="sect">Game availability (admin)</div>
+    <div class="card" style="padding:4px 14px">${GAMES.map(g=>`<div class="set" data-sold="${g.id}"><span>${esc(g.name)}<br><small class="muted">${isSold(g)?"SOLD OUT for customers":"Available"}</small></span><div class="switch ${isSold(g)?"on":""}"></div></div>`).join("")}</div>
+    <div class="muted" style="margin:-4px 2px 12px">Switch ON = SOLD OUT. To change prices, open a game and tap ✏️.</div>`:""}
     <div class="card" style="padding:4px 14px">
       <div class="set" id="tg"><span>🌙 Dark mode</span><div class="switch ${dark?"on":""}" id="sw"></div></div>
       <button class="set" id="ab"><span>ℹ️ About this app</span><span>›</span></button>
@@ -764,6 +808,11 @@ function renderSettings(){
   $("#tg").onclick = () => { setTheme(dark?"light":"dark"); renderSettings(); };
   $("#ab").onclick = () => go("about");
   if (isAdmin()) $("#ad").onclick = () => go("admin");
+  app$.querySelectorAll("[data-sold]").forEach(x => x.onclick = async () => {
+    const g = GAMES.find(k => k.id === x.dataset.sold), next = !isSold(g);
+    try { await setDoc(doc(db,"config","store"), { soldOut: { [g.id]: next } }, { merge:true }); toast(g.name + (next ? " is now SOLD OUT" : " is now AVAILABLE")); }
+    catch(e){ toast("Could not save: " + (e.code || e.message)); }
+  });
   $("#lo").onclick = async () => { await signOut(auth); location.reload(); };
 }
 
