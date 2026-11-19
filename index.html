@@ -258,7 +258,7 @@ const firebaseConfig = {
 };
 const CLOUD_NAME = "ft1osnio";
 const UPLOAD_PRESET = "topup_upload";
-const ADMIN_EMAIL = "nepalihoniyrr0@gmail.com";   // only this Google account sees the Admin panel
+const ADMIN_EMAILS = ["nepalihoniyrr0@gmail.com", "rkarjunrimal7890@gmail.com"];   // only this Google account sees the Admin panel
 const SUPPORT_EMAIL = "nepalihoniyrr0@gmail.com";
 const TG_TOKEN = "8804534214:AAGBF8v8iuWzHHanT-x7sYsN6ENHtCJNEms";   // Telegram bot token
 const TG_CHAT = "6171540574";          // your Telegram chat ID
@@ -330,7 +330,7 @@ let unreadUser = false;
 let current = { page:"home", game:null, item:null };
 const $ = s => document.querySelector(s);
 const app$ = $("#app");
-const isAdmin = () => me && me.email && me.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+const isAdmin = () => me && me.email && ADMIN_EMAILS.map(e => e.toLowerCase()).includes(me.email.toLowerCase());
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 /* ---------- Theme (dark by default) ---------- */
